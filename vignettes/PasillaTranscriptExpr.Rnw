@@ -1,0 +1,326 @@
+%\VignetteIndexEntry{Generation of transcript counts from pasilla dataset with kallisto}
+%\VignettePackage{PasillaTranscriptExpr}
+%\VignetteEngine{knitr::knitr}
+
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+
+
+<<style-knitr, eval=TRUE, echo=FALSE, results="asis">>=
+BiocStyle::latex(use.unsrturl=FALSE)
+@
+
+
+\bioctitle{Generation of transcript counts from pasilla dataset with kallisto}
+%% also: \bioctitle{Title used for both header and title page}
+%% or... \title{Title used for both header and title page}
+\author{Malgorzata Nowicka\footnote{gosia.nowicka@uzh.ch}, Mark Robinson}
+
+% \Rpackage{}
+% \Biocpkg{IRanges}
+% \Biocexptpkg{parathyroidSE}
+% \CRANpkg{data.table}
+
+% \Rfunction{findOverlaps} for functions findOverlaps.
+% \Robject{olaps} for variables olaps.
+% \Rclass{GRanges} when referring to a formal class GRanges.
+% \Rcode{log(x)} for R code, log(x).
+
+% \emph{}
+% \software{kallisto}
+
+\begin{document}
+\maketitle
+\noindent This vignette describes version 
+\Sexpr{packageDescription("PasillaTranscriptExpr")$Version} 
+of the \Rpackage{PasillaTranscriptExpr} package.
+\tableofcontents
+
+
+<<setup_knitr, include=FALSE, cache=FALSE>>=
+library(knitr)
+opts_chunk$set(cache = TRUE, tidy = FALSE, 
+  tidy.opts = list(blank = FALSE, width.cutoff=70), highlight = FALSE, 
+  out.width = "7cm", out.height = "7cm", fig.align = "center")
+@
+
+
+%------------------------------------------------------------------------------
+%
+%------------------------------------------------------------------------------
+
+\section{Description of pasilla dataset}
+
+The \emph{pasilla} dataset was produced by Brooks et al. \cite{Brooks2011}. 
+The aim of their study was to identify exons that are regulated by pasilla 
+protein, the Drosophila melanogaster ortholog of mammalian NOVA1 and NOVA2 
+(well studied splicing factors). In their RNA-seq experiment, the libraries 
+were prepared from 7 biologically independent samples: 4 control samples and 
+3 samples in which pasilla was knocked-down. The libraries were sequenced on 
+the Illumina Genome Analyzer II using single-end and paired-end sequencing 
+and different read lengths. The RNA-seq data can be downloaded from the NCBI’s 
+Gene Expression Omnibus (GEO) under the accession number GSE18508.
+
+
+\section{Required software}
+
+This work-flow can be run on a Unix-like operating system, i.e., Linux or 
+MacOS X with bash shell. All commands, including the one that could be run 
+from terminal window, are run from within \R{} using \Rcode{system()} function. 
+The downloaded and generated files will be saved in the current working directory.
+
+Brooks et al. deposited their data in the Short Read Archive. In order to 
+convert SRA data into fastq format, you need to install the 
+\software{SRA toolkit} available on 
+\url{http://www.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software}.
+
+For the transcript quantification, we use \software{kallisto} 
+version 0.42.1 \cite{Bray}, which is an extremely fast program that quantifies 
+abundances of transcripts. \software{kallisto} is based on the novel idea of
+pseudoalignment to rapidly determine the compatibility of reads with 
+transcripts, without the need for alignment. Thus it works directly on fastq 
+files. The quantification is available in transcripts per million (TPM) and in 
+expected counts. In this package, we make available the expected counts. 
+\software{kallisto} can be downloaded from 
+\url{http://pachterlab.github.io/kallisto/}.
+
+
+\section{Downloading the pasilla data}
+
+We use an automated process to download the SRA files that correspond to 
+4 control (Untreated) samples and 3 pasilla knocked-down (CG8144\_RNAi) samples. 
+All the information about the pasilla assay can be found in the metadata 
+file \emph{SraRunInfo.csv}, which can be downloaded from 
+\url{http://www.ncbi.nlm.nih.gov/sra?term=SRP001537} under \emph{Send to:} 
+$\rightarrow$ \emph{File} $\rightarrow$ \emph{RunInfo} $\rightarrow$ 
+\emph{Create File}. The same file is also available within this package 
+in the \Rcode{extdata} directory.
+
+
+<<sri_file, eval = TRUE>>=
+library(PasillaTranscriptExpr)
+
+data_dir <- system.file("extdata", package = "PasillaTranscriptExpr")
+
+sri <- read.table(paste0(data_dir, "/SraRunInfo.csv"), stringsAsFactors = FALSE,
+  sep = ",", header = TRUE)
+keep <- grep("CG8144|Untreated-", sri$LibraryName)
+sri <- sri[keep, ]
+@
+
+<<download, eval = FALSE>>=
+sra_files <- basename(sri$download_path)
+
+for(i in 1:nrow(sri))
+  download.file(sri$download_path[i], sra_files[i])
+
+@
+
+To convert the SRA files to fastq format, we use the \software{fastq-dump} 
+command from the \software{SRA toolkit}. Then, we compress the fastq files.
+
+<<fastqdump, eval = FALSE>>=
+cmd <- paste0("fastq-dump -O ./ --split-3 ", sra_files)
+
+for(i in 1:length(cmd))
+  system(cmd[i])
+
+system("gzip *.fastq")
+@
+
+
+\section{Downloading the reference genome}
+
+To run \software{kallisto}, you need to download a FASTA formatted file of 
+target sequences:
+
+<<download_fasta, eval = FALSE>>=
+system("wget ftp://ftp.ensembl.org/pub/release-70/fasta/drosophila_melanogaster/cdna/Drosophila_melanogaster.BDGP5.70.cdna.all.fa.gz")
+system("gunzip Drosophila_melanogaster.BDGP5.70.cdna.all.fa.gz")
+@
+
+The output produced by \software{kallisto} contains only the transcript IDs. 
+To add the corresponding gene IDs, we need to download the gene model 
+annotation in GTF format:
+
+<<download_gtf, eval = FALSE>>=
+system("wget ftp://ftp.ensembl.org/pub/release-70/gtf/drosophila_melanogaster/Drosophila_melanogaster.BDGP5.70.gtf.gz")
+system("gunzip Drosophila_melanogaster.BDGP5.70.gtf.gz")
+@
+
+
+
+\section{Transcript quantification with kallisto}
+
+We create a metadata file where each row corresponds to a collection of 
+information needed for a single call of \software{kallisto}. The \emph{pasilla} 
+data consists of paired-end and single-end samples. When you run 
+\software{kallisto} on single-end reads, you have to specify an \Rcode{-l} 
+option which defines the average fragment length. It can be found in 
+\Rcode{sri\$avgLength}. There is one sample (GSM461179) which was sequenced 
+using different read lengths. Therefore, for this sample, we do the 
+transcript quantification for each read length separately and we add the 
+resulting transcript counts in another step.
+
+
+<<kallisto_metadata, eval = TRUE>>=
+sri$LibraryName <- gsub("S2_DRSC_","",sri$LibraryName)
+metadata <- unique(sri[,c("LibraryName", "LibraryLayout", "SampleName",
+  "avgLength")])
+
+for(i in seq_len(nrow(metadata))){
+  indx <- sri$LibraryName == metadata$LibraryName[i]
+  
+  if(metadata$LibraryLayout[i] == "PAIRED"){
+    metadata$fastq[i] <- paste0(sri$Run[indx], "_1.fastq.gz ",
+      sri$Run[indx], "_2.fastq.gz", collapse = " ")
+  }else{
+    metadata$fastq[i] <- paste0(sri$Run[indx], ".fastq.gz", collapse = " ")
+  }
+}
+
+metadata$condition <- ifelse(grepl("CG8144_RNAi", metadata$LibraryName),
+  "KD", "CTL")
+metadata$UniqueName <- paste0(1:nrow(metadata), "_", metadata$SampleName)
+@
+
+In the first step of \software{kallisto} work-flow, we build an index 
+with \software{kallisto index}:
+
+<<kallisto_index, eval = TRUE>>=
+cDNA_fasta <- "Drosophila_melanogaster.BDGP5.70.cdna.all.fa"
+index <- "Drosophila_melanogaster.BDGP5.70.cdna.all.idx"
+
+cmd <- paste("kallisto index -i", index, cDNA_fasta, sep = " ")
+cmd
+@
+
+<<kallisto_index_cmd, eval = FALSE>>=
+system(cmd)
+@
+
+The quantification is done with \software{kallisto quant} command:
+
+<<kallisto_quantification, eval = TRUE>>=
+out_dir <- metadata$UniqueName
+
+cmd <- paste("kallisto quant -i", index, "-o", out_dir, "-b 0 -t 5",
+  ifelse(metadata$LibraryLayout == "SINGLE",
+    paste("--single -l", metadata$avgLength), ""), metadata$fastq)
+cmd
+@
+
+<<kallisto_quantification_cmd, eval = FALSE>>=
+for(i in 1:length(cmd))
+  system(cmd[i])
+@
+
+
+We want to add the gene information and merge the expected transcript counts 
+from different samples into one table.
+
+
+<<library_rtracklayer, eval = TRUE, message = FALSE>>=
+library(rtracklayer)
+@
+
+<<gtf, eval = FALSE>>=
+gtf_dir <- "Drosophila_melanogaster.BDGP5.70.gtf"
+
+gtf <- import(gtf_dir)
+
+gt <- unique(mcols(gtf)[, c("gene_id", "transcript_id")])
+rownames(gt) <- gt$transcript_id
+
+@
+
+
+<<merge_counts, eval = FALSE>>=
+samples <- unique(metadata$SampleName)
+
+counts_list <- lapply(1:length(samples), function(i){
+  indx <- which(metadata$SampleName == samples[i])
+  
+  if(length(indx) == 1){
+    abundance <- read.table(file.path(metadata$UniqueName[indx], 
+      "abundance.txt"), header = TRUE, sep = "\t", as.is = TRUE)
+  }else{
+    abundance <- lapply(indx, function(j){
+      abundance_tmp <- read.table(file.path(metadata$UniqueName[j], 
+        "abundance.txt"), header = TRUE, sep = "\t", as.is = TRUE)
+      abundance_tmp <- abundance_tmp[, c("target_id", "est_counts")]
+      abundance_tmp
+    })
+    abundance <- Reduce(function(...) merge(..., by = "target_id", all = TRUE,
+      sort = FALSE), abundance)
+    est_counts <- rowSums(abundance[, -1])
+    abundance <- data.frame(target_id = abundance$target_id, 
+      est_counts = est_counts, stringsAsFactors = FALSE)
+  }
+  
+  counts <- data.frame(abundance$target_id, abundance$est_counts, 
+    stringsAsFactors = FALSE)
+  colnames(counts) <- c("feature_id", samples[i])
+  return(counts)
+})
+
+counts <- Reduce(function(...) merge(..., by = "feature_id", all = TRUE,
+  sort = FALSE), counts_list)
+
+### Add gene IDs
+counts$gene_id <- gt[counts$feature_id, "gene_id"]
+
+@
+
+At the end, we keep only the unique samples in our metadata file.
+
+<<metadata, eval = TRUE>>=
+metadata <- unique(metadata[, c("LibraryName", "LibraryLayout", "SampleName",
+  "condition")])
+metadata
+@
+
+<<metadata_save, eval = FALSE>>=
+write.table(metadata, "metadata.txt", quote = FALSE, sep = "\t", 
+  row.names = FALSE)
+@
+
+
+
+<<counts_save, eval = FALSE>>=
+### Final counts with columns sorted as in metadata
+counts <- counts[, c("feature_id", "gene_id", metadata$SampleName)]
+write.table(counts, "counts.txt", quote = FALSE, sep = "\t", row.names = FALSE)
+@
+
+
+
+\appendix
+\clearpage
+\begin{center}
+{\Large\sffamily\bfseries\color{BiocBlue} APPENDIX} \addcontentsline{toc}{section}{APPENDIX}
+\end{center}
+
+
+%--------------------------------------------------
+% Session information
+%--------------------------------------------------
+
+\section{Session information}
+
+
+<<sessionInfo>>=
+sessionInfo()
+@
+
+%--------------------------------------------------
+% References
+%--------------------------------------------------
+
+\section{References}
+
+\bibliographystyle{ieeetr}
+\bibliography{PasillaTranscriptExpr}
+
+
+\end{document}
